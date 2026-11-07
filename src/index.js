@@ -7,7 +7,8 @@ const APP_PACKAGE = 'com.max.music';
 const APK_URL = 'https://github.com/kryvexo/MAX-STUDIO-/releases/latest';
 // Apni release keystore ka SHA-256 yahan daalo (keytool -list -v -keystore your.jks)
 const CERT_SHA256 = [
-  '05:32:c9:4b:16:b3:ec:45:0a:2f:33:b5:6f:59:91:02:29:92:7d:ca:a0:35:24:fb:da:b3:2f:fc:ee:79:0a'
+  '05:32:c9:4b:16:b3:ec:45:0a:2f:33:b5:6f:59:91:02:29:92:7d:ca:a0:35:24:fb:da:b3:2f:fc:ee:79:0a',
+  '98:0b:9f:d2:b1:6f:ce:70:63:9d:bc:cd:7d:ad:ca:e2:3e:34:85:67:8e:37:c8:2f:b4:e9:4f:eb:bd:03:9b:11'
 ];
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
