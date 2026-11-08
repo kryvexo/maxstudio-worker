@@ -7,7 +7,9 @@ const CFG = {
   maxUsers: 20,
   graceMs: 120_000,       // disconnect ke baad wapas aane ka time
   bufferTimeoutMs: 10_000,
-  maxMsgsPer10s: 80,
+  maxMsgsPer10s: 80,        // normal msgs (join, playback, text chat)
+  maxControlPer10s: 450,    // app ke hidden-marker chat frames: image chunks (600 chars x <=100), seen, reaction, unsend, open
+  maxChatChars: 2000,       // app max ~1300 bhejta hai; pehle 1500 pe kat jata tha
   sendServerTime: false,  // true => guests position + (now - server_time) se adjust honge
 };
 
@@ -87,7 +89,7 @@ function broadcast(room, type, payload, except) {
   for (const [id, u] of room.users) {
     if (id !== except && u.ws) { send(u.ws, type, payload); n++; }
   }
-  console.log(`[bcast] ${type} room=${room.code} sent_to=${n}/${room.users.size}`);
+  if (type !== 'chat') console.log(`[bcast] ${type} room=${room.code} sent_to=${n}/${room.users.size}`);
 }
 
 export class Hub {
@@ -99,11 +101,16 @@ export class Hub {
   }
 
   async fetch(request) {
+    if (new URL(request.url).pathname === '/stats') {
+      let users = 0, online = 0;
+      for (const r of this.rooms.values()) for (const u of r.users.values()) { users++; if (u.ws) online++; }
+      return Response.json({ rooms: this.rooms.size, users, online });
+    }
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Expected WebSocket', { status: 426 });
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     server.accept();
-    this.meta.set(server, { room: null, user: null, pending: null, hits: 0, win: now() });
+    this.meta.set(server, { room: null, user: null, pending: null, hits: 0, ctl: 0, win: now() });
     server.addEventListener('message', (e) => {
       try { this.onMessage(server, e.data); } catch (err) { fail(server, 'internal_error', 'Server error'); console.error(err); }
     });
@@ -193,8 +200,7 @@ export class Hub {
   onMessage(ws, data) {
     const m = this.meta.get(ws);
     if (!m) return;
-    if (now() - m.win >= 10_000) { m.win = now(); m.hits = 0; }
-    if (++m.hits > CFG.maxMsgsPer10s) return fail(ws, 'rate_limited', 'Too many messages');
+    if (now() - m.win >= 10_000) { m.win = now(); m.hits = 0; m.ctl = 0; }
 
     let msg;
     try { msg = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)); } catch (_) { msg = null; }
@@ -202,8 +208,16 @@ export class Hub {
     const type = String(msg.type);
     const p = msg.payload && typeof msg.payload === 'object' ? msg.payload : {};
 
+    // App image/seen/reaction/unsend/open sab 'chat' frames mein hidden marker ke saath jaate hain
+    // (\u200B[IMG2:..] [SEEN1:..] [OPEN1:..] [RX1] ya \u2063 unsend/mention). Inko alag, bada budget do.
+    const isControl = type === 'chat' && typeof p.message === 'string' &&
+      (p.message.startsWith('\u200B[') || p.message.startsWith('\u2063'));
+    if (isControl ? ++m.ctl > CFG.maxControlPer10s : ++m.hits > CFG.maxMsgsPer10s) {
+      return fail(ws, 'rate_limited', 'Too many messages');
+    }
+
     if (type === 'ping') return send(ws, 'pong');
-    console.log(`[msg] ${type} room=${m.room ?? '-'} user=${m.user ?? '-'}`);
+    if (!isControl) console.log(`[msg] ${type} room=${m.room ?? '-'} user=${m.user ?? '-'}`);
 
     // ---- room ke bahar ----
     if (type === 'create_room') {
@@ -379,10 +393,16 @@ export class Hub {
       }
 
       case 'chat': {
-        const text = String(p.message ?? '').trim();
-        if (!text) return;
+        // message ko bilkul waise hi relay karo (zero-width markers trim/kaatne se toot jaate hain)
+        const raw = typeof p.message === 'string' ? p.message : String(p.message ?? '');
+        if (!raw || !raw.replace(/\s/g, '')) return;
+        const out = { user_id: id, username: me.name, message: raw.slice(0, CFG.maxChatChars), timestamp: now() };
+        const r = p.reply_to;
+        if (r && typeof r === 'object' && r.username != null) {
+          out.reply_to = { username: str(r.username, 48), message: str(r.message, 300) };
+        }
         // sender ko bhi milta hai (client local echo nahi karta)
-        return broadcast(room, 'chat', { user_id: id, username: me.name, message: text.slice(0, 1500), timestamp: now() });
+        return broadcast(room, 'chat', out);
       }
 
       case 'request_sync':
