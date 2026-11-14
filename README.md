@@ -43,3 +43,7 @@ hidden zero-width markers se chalte hain. Server unhe **bilkul waise hi relay** 
 - `reply_to {username, message}` bhi forward hota hai
 
 Status page: `https://DOMAIN/` , JSON: `/api/status`.
+
+## Web UI (liquid glass)
+Saare pages (`/`, `/listen`, `/watch`, `/playlist`, `/channel`, 404) ab `src/ui.js` se aate hain: liquid glass cards, dark/light auto, copy button, live stats.
+UI badalna ho to sirf `src/ui.js` edit karo; routing/WebSocket `index.js` / `hub.js` mein untouched hai.
