@@ -11,8 +11,7 @@ class_name = "Hub"
 tag = "v1"
 new_sqlite_classes = ["Hub"]
 
-# Apna custom domain lagana ho to uncomment karo (domain Cloudflare par add hona chahiye):
-# routes = [{ pattern = "maxstudio.fun", custom_domain = true }]
+routes = [{ pattern = "maxown.eu.cc", custom_domain = true }]
 
 [observability]
 enabled = true
