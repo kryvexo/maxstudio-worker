@@ -13,6 +13,28 @@ const CFG = {
   sendServerTime: false,  // true => guests position + (now - server_time) se adjust honge
 };
 
+const PROFILE_PREFIX = '\u200B[MAXPROFILE1:';
+const PROFILE_SUFFIX = ']\u200B';
+
+// Constant-time string compare (secret key check).
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || !b) return false;
+  let d = a.length ^ b.length;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) d |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return d === 0;
+}
+function b64urlDecode(v) {
+  let s = v.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+}
+function b64urlEncode(text) {
+  let bin = '';
+  new TextEncoder().encode(text).forEach((b) => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 const now = () => Date.now();
 const uid = () => 'u' + crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 const token = () => crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
@@ -94,6 +116,7 @@ function broadcast(room, type, payload, except) {
 
 export class Hub {
   constructor(state, env) {
+    this.env = env;
     this.rooms = new Map();     // code -> room
     this.sessions = new Map();  // token -> {room, user}
     this.meta = new WeakMap();  // ws -> {room, user, pending, hits, win}
@@ -193,6 +216,23 @@ export class Hub {
       if (!next) next = room.users.keys().next().value;
       room.host = next;
       broadcast(room, 'host_changed', { new_host_id: next, new_host_name: room.users.get(next).name });
+    }
+  }
+
+  // Profile beacon ko server rewrite karta hai: client ka bheja 'is_developer' kabhi trust nahi hota.
+  sealProfile(raw) {
+    try {
+      if (!raw.endsWith(PROFILE_SUFFIX) || raw.length > 2048) return null;
+      const body = raw.slice(PROFILE_PREFIX.length, raw.length - PROFILE_SUFFIX.length);
+      const profile = JSON.parse(b64urlDecode(body));
+      if (!profile || typeof profile !== 'object') return null;
+      const secret = this.env && this.env.DEV_TOKEN;
+      const isDev = safeEqual(String(profile.dev_token ?? ''), String(secret ?? ''));
+      delete profile.dev_token;
+      profile.is_developer = isDev;
+      return PROFILE_PREFIX + b64urlEncode(JSON.stringify(profile)) + PROFILE_SUFFIX;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -394,8 +434,13 @@ export class Hub {
 
       case 'chat': {
         // message ko bilkul waise hi relay karo (zero-width markers trim/kaatne se toot jaate hain)
-        const raw = typeof p.message === 'string' ? p.message : String(p.message ?? '');
+        let raw = typeof p.message === 'string' ? p.message : String(p.message ?? '');
         if (!raw || !raw.replace(/\s/g, '')) return;
+        // Developer badge: sirf DEV_TOKEN secret wala client hi 'is_developer' paa sakta hai.
+        if (raw.startsWith(PROFILE_PREFIX)) {
+          raw = this.sealProfile(raw);
+          if (!raw) return;
+        }
         const out = { user_id: id, username: me.name, message: raw.slice(0, CFG.maxChatChars), timestamp: now() };
         const r = p.reply_to;
         if (r && typeof r === 'object' && r.username != null) {
